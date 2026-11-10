@@ -73,8 +73,9 @@ export default function App() {
   const [isAudioMuted, setIsAudioMuted] = useState<boolean>(false);
   const [isHapticsEnabled, setIsHapticsEnabled] = useState<boolean>(true);
   const [isOfflineMode, setIsOfflineMode] = useState<boolean>(false);
-  const [showElevationProfile, setShowElevationProfile] = useState<boolean>(true);
+  const [showElevationProfile, setShowElevationProfile] = useState<boolean>(false);
   const [showPOIsOnMap, setShowPOIsOnMap] = useState<boolean>(true);
+  const [hudMode, setHudMode] = useState<'compact' | 'full' | 'hidden'>('compact');
 
   // Modals & Drawers
   const [isTripPlannerOpen, setIsTripPlannerOpen] = useState<boolean>(false);
@@ -390,12 +391,13 @@ export default function App() {
     <div className={`relative w-screen h-screen overflow-hidden flex flex-col font-sans select-none ${
       isSunlightMode ? 'bg-amber-50 text-zinc-950' : 'bg-zinc-950 text-zinc-100'
     }`}>
-      {/* APP TOP APP-BAR (MINIMALIST & MOBILE-GLANCEABLE) */}
-      <header className={`relative z-[1050] flex items-center justify-between px-3.5 py-2.5 border-b backdrop-blur-xl transition ${
-        isSunlightMode 
-          ? 'bg-amber-100/95 border-amber-300 text-zinc-900' 
-          : 'bg-zinc-950/90 border-zinc-800 text-zinc-100'
-      }`}>
+      {/* APP TOP APP-BAR (HIDDEN DURING ACTIVE RIDE) */}
+      {!hasRideStarted && (
+        <header className={`relative z-[1050] flex items-center justify-between px-3.5 py-2.5 border-b backdrop-blur-xl transition ${
+          isSunlightMode 
+            ? 'bg-amber-100/95 border-amber-300 text-zinc-900' 
+            : 'bg-zinc-950/90 border-zinc-800 text-zinc-100'
+        }`}>
         {/* Brand & Route Selector Dropdown */}
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-xl bg-emerald-500 flex items-center justify-center text-black shadow-md shadow-emerald-500/20">
@@ -536,6 +538,7 @@ export default function App() {
           </button>
         </div>
       </header>
+      )}
 
       {/* MAIN VIEWPORT: INTERACTIVE AUTO-ROTATING MAP */}
       <main className="relative flex-1 w-full h-full overflow-hidden">
@@ -624,11 +627,18 @@ export default function App() {
               NavigationFeedbackController.triggerHaptic('click');
             }}
             activeHazardAlert={activeHazard}
+            hudMode={hudMode}
+            onChangeHudMode={setHudMode}
+            onEndRide={() => {
+              setHasRideStarted(false);
+              setIsSimulating(false);
+              NavigationFeedbackController.speak('Ride navigation ended');
+            }}
           />
         )}
 
         {/* Floating Quick Toggles (Layers, POI toggle, Elevation toggle) */}
-        <div className="absolute top-28 right-3 z-[990] flex flex-col gap-2">
+        <div className={`absolute ${hasRideStarted ? (hudMode === 'compact' ? 'top-16' : 'top-32') : 'top-28'} right-3 z-[1050] flex flex-col gap-2`}>
           {/* Map Layer Theme Cycle */}
           <button
             onClick={() => {
@@ -676,9 +686,15 @@ export default function App() {
           </button>
         </div>
 
-        {/* Collapsible Elevation Profile Strip (positioned above HUD) */}
-        {showElevationProfile && (
-          <div className="absolute bottom-52 left-3 right-3 z-[990] max-w-xl mx-auto transition-all">
+        {/* Collapsible Elevation Profile Strip (positioned dynamically above HUD) */}
+        {showElevationProfile && hudMode !== 'hidden' && (
+          <div className={`absolute left-3 right-3 z-[990] max-w-xl mx-auto transition-all duration-300 ${
+            !hasRideStarted 
+              ? 'bottom-4' 
+              : hudMode === 'compact' 
+              ? 'bottom-16 sm:bottom-18' 
+              : 'bottom-52 sm:bottom-56'
+          }`}>
             <ElevationProfile
               points={activeRoute.points}
               currentPointIndex={currentPointIndex}
@@ -686,6 +702,7 @@ export default function App() {
               totalElevationGainM={activeRoute.totalElevationGainM}
               maxElevationM={activeRoute.maxElevationM}
               isSunlightMode={isSunlightMode}
+              isCompact={hasRideStarted && hudMode === 'compact'}
               onSelectPointIndex={(idx) => {
                 setCurrentPointIndex(idx);
                 NavigationFeedbackController.triggerHaptic('click');

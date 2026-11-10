@@ -11,6 +11,7 @@ interface ElevationProfileProps {
   maxElevationM: number;
   onSelectPointIndex?: (index: number) => void;
   isSunlightMode?: boolean;
+  isCompact?: boolean;
 }
 
 export const ElevationProfile: React.FC<ElevationProfileProps> = ({
@@ -20,7 +21,8 @@ export const ElevationProfile: React.FC<ElevationProfileProps> = ({
   totalElevationGainM,
   maxElevationM,
   onSelectPointIndex,
-  isSunlightMode = false
+  isSunlightMode = false,
+  isCompact = false
 }) => {
   if (!points.length) return null;
 
@@ -30,11 +32,11 @@ export const ElevationProfile: React.FC<ElevationProfileProps> = ({
   const maxEle = Math.max(...elevations, 50);
   const eleRange = Math.max(1, maxEle - minEle);
 
-  // SVG dimensions
+  // SVG dimensions - adaptive low-profile height when in compact mode
   const width = 1000;
-  const height = 110;
-  const paddingBottom = 22;
-  const paddingTop = 12;
+  const height = isCompact ? 56 : 110;
+  const paddingBottom = isCompact ? 14 : 22;
+  const paddingTop = isCompact ? 6 : 12;
   const chartHeight = height - paddingBottom - paddingTop;
 
   // Build path coordinates
@@ -59,8 +61,8 @@ export const ElevationProfile: React.FC<ElevationProfileProps> = ({
         : 'bg-zinc-900/90 border-zinc-800 text-zinc-100 backdrop-blur-md'
     }`}>
       {/* Header Info */}
-      <div className="flex items-center justify-between px-3.5 py-2 border-b border-inherit text-xs">
-        <div className="flex items-center gap-3 font-semibold">
+      <div className={`flex items-center justify-between px-3.5 ${isCompact ? 'py-1' : 'py-2'} border-b border-inherit text-xs`}>
+        <div className="flex items-center gap-2.5 font-semibold">
           <span className="flex items-center gap-1 text-emerald-400">
             <TrendingUp className="w-3.5 h-3.5" />
             +{totalElevationGainM}m gain
@@ -68,6 +70,9 @@ export const ElevationProfile: React.FC<ElevationProfileProps> = ({
           <span className="flex items-center gap-1 text-sky-400">
             <Mountain className="w-3.5 h-3.5" />
             {maxElevationM}m peak
+          </span>
+          <span className="hidden sm:inline-block text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+            Actual DEM Topography
           </span>
           {currentGrade >= 7 && (
             <span className="flex items-center gap-1 text-rose-400 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/30">
@@ -82,7 +87,7 @@ export const ElevationProfile: React.FC<ElevationProfileProps> = ({
       </div>
 
       {/* Interactive SVG Profile */}
-      <div className="relative w-full h-[95px] px-2 pt-1">
+      <div className={`relative w-full ${isCompact ? 'h-[44px]' : 'h-[95px]'} px-2 pt-1`}>
         <svg
           viewBox={`0 0 ${width} ${height}`}
           preserveAspectRatio="none"

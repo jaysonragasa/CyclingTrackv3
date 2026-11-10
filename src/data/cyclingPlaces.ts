@@ -309,10 +309,6 @@ export function searchCyclingPlaces(query: string, limit: number = 7): CyclingPl
     .map(item => item.place)
     .slice(0, limit);
 
-  // If no specific match, fallback to top spots
-  if (matchingResults.length === 0) {
-    return CYCLING_PLACES.slice(0, limit);
-  }
-
+  // If user searched a custom query and no local cycling presets matched, return empty so live worldwide results take full priority
   return matchingResults;
 }

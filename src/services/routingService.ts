@@ -1,5 +1,6 @@
 import { CyclingRoute, RoutePoint, TurnInstruction, TurnManeuver, HazardAlert } from '../types/cycling';
 import { calculateDistanceMeters, calculateGrade, calculateElevationGain } from '../utils/geo';
+import { fetchRealElevations } from './elevationService';
 
 export async function fetchRealBicycleRoute(
   start: { lat: number; lng: number; name?: string },
@@ -17,23 +18,19 @@ export async function fetchRealBicycleRoute(
       const osrmRoute = data.routes[0];
       const coords: [number, number][] = osrmRoute.geometry.coordinates; // [lng, lat]
 
-      // Generate points with realistic elevation curve and grade
+      // Fetch authentic worldwide Digital Elevation Model (Copernicus DEM & SRTM) data for all route coordinates
+      const rawCoords = coords.map(c => ({ lat: c[1], lng: c[0] }));
+      const actualElevations = await fetchRealElevations(rawCoords);
+
+      // Generate points with authentic terrain elevations and real slope grades
       const points: RoutePoint[] = [];
       let cumDist = 0;
       let prevPt: { lat: number; lng: number; ele: number } | null = null;
 
-      // Base altitudes for start and end
-      const baseStartEle = 15;
-      const baseEndEle = 45;
-
       coords.forEach((c, idx) => {
         const lng = c[0];
         const lat = c[1];
-        const progress = coords.length > 1 ? idx / (coords.length - 1) : 0;
-        
-        // Realistic terrain elevation curve with local hills
-        const hillWave = Math.sin(progress * Math.PI * 3) * 35 + Math.sin(progress * Math.PI * 7) * 12;
-        const ele = Math.max(2, Math.round(baseStartEle + (baseEndEle - baseStartEle) * progress + hillWave));
+        const ele = actualElevations[idx] !== undefined ? actualElevations[idx] : 15;
 
         let grade = 0;
         if (prevPt) {

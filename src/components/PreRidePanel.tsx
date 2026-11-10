@@ -3,7 +3,7 @@ import { CyclingRoute } from '../types/cycling';
 import { ALL_PRESET_ROUTES } from '../data/sampleRoutes';
 import { AddressAutoSuggestInput } from './AddressAutoSuggestInput';
 import { CyclingPlace } from '../data/cyclingPlaces';
-import { GeocodedAddress } from '../services/geocodingService';
+import { GeocodedAddress, geocodeAddressSingle } from '../services/geocodingService';
 import { fetchRealBicycleRoute } from '../services/routingService';
 import { fetchLiveWeather } from '../services/weatherService';
 import { 
@@ -14,7 +14,10 @@ import {
   Navigation,
   Radio,
   Loader2,
-  CheckCircle2
+  CheckCircle2,
+  Globe,
+  Sparkles,
+  MapPin
 } from 'lucide-react';
 import { formatDuration } from '../utils/cyclingEstimator';
 
@@ -60,21 +63,16 @@ export const PreRidePanel: React.FC<PreRidePanelProps> = ({
 
   const [isRoutingLive, setIsRoutingLive] = useState<boolean>(false);
   const [liveRoutingSuccess, setLiveRoutingSuccess] = useState<boolean>(false);
+  const [routeStatusMessage, setRouteStatusMessage] = useState<string>('');
+
+  // Check if inputs differ from currently calculated route
+  const hasUncalculatedCustomAddress = 
+    (pointA.trim().toLowerCase() !== coordsA.name.toLowerCase() && pointA.trim().length >= 3) ||
+    (pointB.trim().toLowerCase() !== coordsB.name.toLowerCase() && pointB.trim().length >= 3);
 
   // Calculate estimated duration at preferred speed
   const estHours = route.totalDistanceKm / Math.max(10, preferredSpeedKmh);
   const estMinutes = Math.round(estHours * 60);
-
-  // Swap Point A and B
-  const handleSwap = () => {
-    const tempName = pointA;
-    const tempCoords = coordsA;
-    setPointA(pointB);
-    setCoordsA(coordsB);
-    setPointB(tempName);
-    setCoordsB(tempCoords);
-    triggerLiveRouteCalc(coordsB, tempCoords);
-  };
 
   // Helper to trigger live routing calculation
   const triggerLiveRouteCalc = async (
@@ -83,6 +81,7 @@ export const PreRidePanel: React.FC<PreRidePanelProps> = ({
   ) => {
     setIsRoutingLive(true);
     setLiveRoutingSuccess(false);
+    setRouteStatusMessage(`Calculating live bicycle route from ${start.name} to ${end.name}...`);
 
     try {
       const realRoute = await fetchRealBicycleRoute(start, end);
@@ -96,10 +95,54 @@ export const PreRidePanel: React.FC<PreRidePanelProps> = ({
 
         onSelectRoute(realRoute);
         setLiveRoutingSuccess(true);
-        setTimeout(() => setLiveRoutingSuccess(false), 3000);
+        setRouteStatusMessage(`Live OSM bicycle route calculated: ${realRoute.totalDistanceKm.toFixed(1)} km`);
+        setTimeout(() => setLiveRoutingSuccess(false), 4500);
       }
     } catch (err) {
       console.warn('Could not compute live route, keeping preset:', err);
+      setRouteStatusMessage('Could not connect to live routing server. Using direct path.');
+    } finally {
+      setIsRoutingLive(false);
+    }
+  };
+
+  // Swap Point A and B
+  const handleSwap = () => {
+    const tempName = pointA;
+    const tempCoords = coordsA;
+    setPointA(pointB);
+    setCoordsA(coordsB);
+    setPointB(tempName);
+    setCoordsB(tempCoords);
+    triggerLiveRouteCalc(coordsB, tempCoords);
+  };
+
+  // Resolve typed text in Point A and Point B and calculate route
+  const handleCalculateCustomAddresses = async () => {
+    let currentStart = coordsA;
+    let currentEnd = coordsB;
+
+    setIsRoutingLive(true);
+    setRouteStatusMessage('Geocoding addresses globally...');
+
+    try {
+      if (pointA.trim().toLowerCase() !== coordsA.name.toLowerCase()) {
+        const resolvedA = await geocodeAddressSingle(pointA);
+        if (resolvedA) {
+          currentStart = { lat: resolvedA.lat, lng: resolvedA.lng, name: resolvedA.name };
+          setCoordsA(currentStart);
+        }
+      }
+
+      if (pointB.trim().toLowerCase() !== coordsB.name.toLowerCase()) {
+        const resolvedB = await geocodeAddressSingle(pointB);
+        if (resolvedB) {
+          currentEnd = { lat: resolvedB.lat, lng: resolvedB.lng, name: resolvedB.name };
+          setCoordsB(currentEnd);
+        }
+      }
+
+      await triggerLiveRouteCalc(currentStart, currentEnd);
     } finally {
       setIsRoutingLive(false);
     }
@@ -140,6 +183,13 @@ export const PreRidePanel: React.FC<PreRidePanelProps> = ({
     triggerLiveRouteCalc(coordsA, newCoordsB);
   };
 
+  const handleStartRideWithCustomCheck = async () => {
+    if (hasUncalculatedCustomAddress) {
+      await handleCalculateCustomAddresses();
+    }
+    onStartRide();
+  };
+
   return (
     <div className="absolute top-16 left-3 right-3 z-[1000] max-w-xl mx-auto pointer-events-none">
       <div className={`pointer-events-auto rounded-3xl shadow-2xl border transition-all duration-300 overflow-visible ${
@@ -151,8 +201,9 @@ export const PreRidePanel: React.FC<PreRidePanelProps> = ({
         <div className="flex items-center justify-between px-4 py-2.5 bg-emerald-500/10 border-b border-inherit rounded-t-3xl">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span className="text-xs font-black uppercase tracking-wider text-emerald-400">
-              {isRoutingLive ? 'Calculating Live Route...' : 'Live Route • Bike Lanes Prioritized'}
+            <span className="text-xs font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+              <Globe className="w-3.5 h-3.5" />
+              <span>{isRoutingLive ? 'Calculating Live Route...' : 'Bicycle Lanes & Elevation Routing'}</span>
             </span>
           </div>
 
@@ -190,7 +241,7 @@ export const PreRidePanel: React.FC<PreRidePanelProps> = ({
                 value={pointA}
                 onChange={setPointA}
                 onSelectPlace={handleSelectPlaceA}
-                placeholder="Search worldwide address, trailhead, or cycleway..."
+                placeholder="Type your address, street or city..."
                 isOrigin={true}
                 isSunlightMode={isSunlightMode}
                 onUseCurrentLocation={() => {
@@ -202,13 +253,14 @@ export const PreRidePanel: React.FC<PreRidePanelProps> = ({
                           lng: pos.coords.longitude,
                           name: 'My Current Location (GPS)'
                         };
-                        setPointA(myCoords.name);
                         setCoordsA(myCoords);
+                        setPointA(myCoords.name);
                         triggerLiveRouteCalc(myCoords, coordsB);
                       },
-                      () => {
-                        setPointA('Presidio Bike Hub (Current GPS)');
-                      }
+                      (err) => {
+                        console.warn('Geolocation denied or unavailable:', err.message);
+                      },
+                      { enableHighAccuracy: true, timeout: 8000 }
                     );
                   }
                 }}
@@ -220,7 +272,7 @@ export const PreRidePanel: React.FC<PreRidePanelProps> = ({
                 value={pointB}
                 onChange={setPointB}
                 onSelectPlace={handleSelectPlaceB}
-                placeholder="Search destination, summit, street or cafe..."
+                placeholder="Type destination address, street or city..."
                 isOrigin={false}
                 isSunlightMode={isSunlightMode}
               />
@@ -242,38 +294,73 @@ export const PreRidePanel: React.FC<PreRidePanelProps> = ({
             </button>
           </div>
 
-          {/* Quick Preset Cycling Routes Selection Chips */}
-          <div className="flex items-center gap-1.5 overflow-x-auto py-1 text-xs">
-            {ALL_PRESET_ROUTES.map(r => {
-              const isSelected = r.id === route.id;
-              return (
-                <button
-                  key={r.id}
-                  onClick={() => {
-                    onSelectRoute(r);
-                    setPointA(r.waypoints[0]?.name || 'Origin');
-                    setPointB(r.waypoints[r.waypoints.length - 1]?.name || 'Destination');
-                    setCoordsA({ lat: r.waypoints[0]?.lat || 37.8, lng: r.waypoints[0]?.lng || -122.4, name: r.waypoints[0]?.name || 'Origin' });
-                    setCoordsB({ lat: r.waypoints[r.waypoints.length - 1]?.lat || 37.85, lng: r.waypoints[r.waypoints.length - 1]?.lng || -122.48, name: r.waypoints[r.waypoints.length - 1]?.name || 'Destination' });
-                  }}
-                  className={`px-3 py-1.5 rounded-xl whitespace-nowrap font-bold transition text-xs flex items-center gap-1.5 cursor-pointer ${
-                    isSelected
-                      ? 'bg-emerald-500 text-black shadow-md shadow-emerald-500/20'
-                      : 'bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300'
-                  }`}
-                >
-                  <RouteIcon className="w-3.5 h-3.5" />
-                  <span>{r.name.split('&')[0].trim()}</span>
-                </button>
-              );
-            })}
+          {/* Action to compute custom route if user typed custom addresses */}
+          {hasUncalculatedCustomAddress && (
+            <button
+              type="button"
+              onClick={handleCalculateCustomAddresses}
+              disabled={isRoutingLive}
+              className="w-full py-2.5 px-3 rounded-xl bg-sky-500/15 border border-sky-500/30 text-sky-300 font-bold text-xs flex items-center justify-center gap-2 hover:bg-sky-500/25 transition cursor-pointer"
+            >
+              {isRoutingLive ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Searching &amp; Routing...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Calculate Bike Route for &ldquo;{pointA}&rdquo; &rarr; &ldquo;{pointB}&rdquo;</span>
+                </>
+              )}
+            </button>
+          )}
+
+          {/* Route Calculation Status Bar */}
+          {routeStatusMessage && (
+            <div className="text-[11px] px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300 flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+              <span className="truncate">{routeStatusMessage}</span>
+            </div>
+          )}
+
+          {/* Quick Demo Presets Chips Bar */}
+          <div className="space-y-1">
+            <div className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">
+              Demo Route Shortcuts:
+            </div>
+            <div className="flex items-center gap-1.5 overflow-x-auto py-1 text-xs">
+              {ALL_PRESET_ROUTES.map(r => {
+                const isSelected = r.id === route.id;
+                return (
+                  <button
+                    key={r.id}
+                    onClick={() => {
+                      onSelectRoute(r);
+                      setPointA(r.waypoints[0]?.name || 'Origin');
+                      setPointB(r.waypoints[r.waypoints.length - 1]?.name || 'Destination');
+                      setCoordsA({ lat: r.waypoints[0]?.lat || 37.8, lng: r.waypoints[0]?.lng || -122.4, name: r.waypoints[0]?.name || 'Origin' });
+                      setCoordsB({ lat: r.waypoints[r.waypoints.length - 1]?.lat || 37.85, lng: r.waypoints[r.waypoints.length - 1]?.lng || -122.48, name: r.waypoints[r.waypoints.length - 1]?.name || 'Destination' });
+                    }}
+                    className={`px-3 py-1.5 rounded-xl whitespace-nowrap font-bold transition text-xs flex items-center gap-1.5 cursor-pointer ${
+                      isSelected
+                        ? 'bg-emerald-500 text-black shadow-md shadow-emerald-500/20'
+                        : 'bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300'
+                    }`}
+                  >
+                    <RouteIcon className="w-3.5 h-3.5" />
+                    <span>{r.name.split('&')[0].trim()}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          {/* Route Stats Summary Strip */}
-          <div className="grid grid-cols-3 gap-2 p-2.5 rounded-2xl bg-zinc-900/60 border border-inherit text-center text-xs">
+          {/* SUMMARY TRIP METRICS FOR SELECTED ROUTE */}
+          <div className="grid grid-cols-3 gap-2 py-2 px-3 rounded-2xl bg-black/30 border border-inherit text-center">
             <div>
               <span className="text-[10px] font-bold opacity-60 block">DISTANCE</span>
-              <span className="text-sm font-black font-mono text-zinc-100">{route.totalDistanceKm} km</span>
+              <span className="text-sm font-black font-mono text-white">{route.totalDistanceKm.toFixed(1)} km</span>
             </div>
             <div>
               <span className="text-[10px] font-bold opacity-60 block">ELEVATION</span>
@@ -316,7 +403,7 @@ export const PreRidePanel: React.FC<PreRidePanelProps> = ({
           <div className="flex items-center gap-2.5 pt-1">
             {/* Start Ride Button */}
             <button
-              onClick={onStartRide}
+              onClick={handleStartRideWithCustomCheck}
               disabled={isRoutingLive}
               className="flex-1 py-3 px-4 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-sm sm:text-base flex items-center justify-center gap-2 shadow-xl shadow-emerald-500/25 active:scale-98 transition cursor-pointer disabled:opacity-50"
               aria-label="Start ride navigation"

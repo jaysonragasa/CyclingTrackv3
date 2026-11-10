@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { CyclingPlace, searchCyclingPlaces } from '../data/cyclingPlaces';
-import { searchRealAddresses, GeocodedAddress } from '../services/geocodingService';
+import { searchRealAddresses, geocodeAddressSingle, GeocodedAddress } from '../services/geocodingService';
 import { 
   MapPin, 
   Flag, 
@@ -13,7 +13,9 @@ import {
   X, 
   Check,
   Globe,
-  Loader2
+  Loader2,
+  Search,
+  ArrowRight
 } from 'lucide-react';
 
 interface AddressAutoSuggestInputProps {
@@ -32,7 +34,7 @@ export const AddressAutoSuggestInput: React.FC<AddressAutoSuggestInputProps> = (
   value,
   onChange,
   onSelectPlace,
-  placeholder = 'Search address, trailhead, or summit...',
+  placeholder = 'Type your address, street, city or trailhead...',
   isOrigin = true,
   isSunlightMode = false,
   onUseCurrentLocation
@@ -41,12 +43,21 @@ export const AddressAutoSuggestInput: React.FC<AddressAutoSuggestInputProps> = (
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const [liveResults, setLiveResults] = useState<GeocodedAddress[]>([]);
   const [isSearchingLive, setIsSearchingLive] = useState(false);
+  const [isResolvingDirect, setIsResolvingDirect] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Instant local suggestions (0ms latency)
-  const localSuggestions = useMemo(() => searchCyclingPlaces(value, 4), [value]);
+  // Local preset matches (only if user query actually matches a preset, otherwise empty)
+  const localSuggestions = useMemo(() => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      // Empty input: show top 4 preset hubs
+      return searchCyclingPlaces('', 4);
+    }
+    // Non-empty: only return if query explicitly matches preset name/address
+    return searchCyclingPlaces(trimmed, 3);
+  }, [value]);
 
   // Debounced live worldwide OpenStreetMap / Komoot Photon geocoding
   useEffect(() => {
@@ -60,37 +71,46 @@ export const AddressAutoSuggestInput: React.FC<AddressAutoSuggestInputProps> = (
     setIsSearchingLive(true);
     const timer = setTimeout(async () => {
       try {
-        const results = await searchRealAddresses(trimmed, 5);
+        const results = await searchRealAddresses(trimmed, 6);
         setLiveResults(results);
       } catch {
         setLiveResults([]);
       } finally {
         setIsSearchingLive(false);
       }
-    }, 280);
+    }, 180); // Fast 180ms debounce
 
     return () => clearTimeout(timer);
   }, [value]);
 
-  // Merge local & live results, deduplicating by normalized name
+  // PRIORITIZE LIVE WORLDWIDE RESULTS OVER PRESETS
   const allSuggestions = useMemo(() => {
+    const trimmed = value.trim();
     const seenNames = new Set<string>();
     const list: (CyclingPlace | (GeocodedAddress & { isLive?: boolean }))[] = [];
 
-    localSuggestions.forEach(p => {
-      seenNames.add(p.name.toLowerCase());
-      list.push(p);
-    });
+    // 1. Live Worldwide Results First when searching
+    if (trimmed.length >= 2) {
+      liveResults.forEach(r => {
+        const key = `${r.name.toLowerCase()}-${r.lat.toFixed(3)}`;
+        if (!seenNames.has(key)) {
+          seenNames.add(key);
+          list.push({ ...r, isLive: true });
+        }
+      });
+    }
 
-    liveResults.forEach(r => {
-      if (!seenNames.has(r.name.toLowerCase())) {
-        seenNames.add(r.name.toLowerCase());
-        list.push({ ...r, isLive: true });
+    // 2. Local Presets (only if they matched the query or input is empty)
+    localSuggestions.forEach(p => {
+      const key = `${p.name.toLowerCase()}-${p.lat.toFixed(3)}`;
+      if (!seenNames.has(key)) {
+        seenNames.add(key);
+        list.push(p);
       }
     });
 
-    return list.slice(0, 7);
-  }, [localSuggestions, liveResults]);
+    return list.slice(0, 8);
+  }, [value, liveResults, localSuggestions]);
 
   // Click outside listener to dismiss suggestions
   useEffect(() => {
@@ -111,7 +131,45 @@ export const AddressAutoSuggestInput: React.FC<AddressAutoSuggestInputProps> = (
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  // Immediate geocode for user-typed address
+  const handleDirectGeocode = async (queryText: string) => {
+    const clean = queryText.trim();
+    if (!clean) return;
+
+    setIsResolvingDirect(true);
+    try {
+      const resolved = await geocodeAddressSingle(clean);
+      if (resolved) {
+        handleSelect(resolved);
+      } else {
+        // Fallback: create arbitrary point or alert
+        setIsOpen(false);
+      }
+    } catch (err) {
+      console.warn('Direct geocoding error:', err);
+    } finally {
+      setIsResolvingDirect(false);
+    }
+  };
+
+  const handleKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!isOpen) {
+        handleDirectGeocode(value);
+        return;
+      }
+
+      if (highlightedIndex >= 0 && highlightedIndex < allSuggestions.length) {
+        handleSelect(allSuggestions[highlightedIndex]);
+      } else if (allSuggestions.length > 0) {
+        handleSelect(allSuggestions[0]);
+      } else {
+        handleDirectGeocode(value);
+      }
+      return;
+    }
+
     if (!isOpen) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         setIsOpen(true);
@@ -125,13 +183,6 @@ export const AddressAutoSuggestInput: React.FC<AddressAutoSuggestInputProps> = (
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       setHighlightedIndex(prev => (prev > 0 ? prev - 1 : allSuggestions.length - 1));
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      if (highlightedIndex >= 0 && highlightedIndex < allSuggestions.length) {
-        handleSelect(allSuggestions[highlightedIndex]);
-      } else if (allSuggestions.length > 0) {
-        handleSelect(allSuggestions[0]);
-      }
     } else if (e.key === 'Escape') {
       setIsOpen(false);
     }
@@ -168,7 +219,7 @@ export const AddressAutoSuggestInput: React.FC<AddressAutoSuggestInputProps> = (
           <button
             type="button"
             onClick={onUseCurrentLocation}
-            className="text-[10px] font-bold text-sky-400 hover:text-sky-300 flex items-center gap-1 transition"
+            className="text-[10px] font-bold text-sky-400 hover:text-sky-300 flex items-center gap-1 transition cursor-pointer"
           >
             <Crosshair className="w-3 h-3" />
             <span>Use Current GPS</span>
@@ -196,16 +247,27 @@ export const AddressAutoSuggestInput: React.FC<AddressAutoSuggestInputProps> = (
           aria-expanded={isOpen}
           role="combobox"
           aria-autocomplete="list"
-          className={`w-full rounded-xl px-3 py-2 pr-8 text-xs sm:text-sm font-semibold transition border ${
+          className={`w-full rounded-xl px-3 py-2 pr-16 text-xs sm:text-sm font-semibold transition border ${
             isSunlightMode
               ? 'bg-zinc-50 border-zinc-300 text-zinc-950 focus:border-emerald-600 focus:bg-white'
               : 'bg-zinc-900/80 border-zinc-700/80 text-zinc-100 focus:border-emerald-500 focus:bg-zinc-900'
           } focus:outline-none`}
         />
 
-        <div className="absolute right-2.5 flex items-center gap-1">
-          {isSearchingLive && (
+        <div className="absolute right-2.5 flex items-center gap-1.5">
+          {isSearchingLive || isResolvingDirect ? (
             <Loader2 className="w-3.5 h-3.5 text-sky-400 animate-spin" />
+          ) : (
+            value.trim().length >= 2 && (
+              <button
+                type="button"
+                onClick={() => handleDirectGeocode(value)}
+                title="Search this address globally"
+                className="p-1 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-black transition cursor-pointer"
+              >
+                <Search className="w-3.5 h-3.5" />
+              </button>
+            )
           )}
 
           {value && (
@@ -213,9 +275,10 @@ export const AddressAutoSuggestInput: React.FC<AddressAutoSuggestInputProps> = (
               type="button"
               onClick={() => {
                 onChange('');
+                setLiveResults([]);
                 inputRef.current?.focus();
               }}
-              className="p-1 text-zinc-400 hover:text-white transition"
+              className="p-1 text-zinc-400 hover:text-white transition cursor-pointer"
               aria-label={`Clear ${label}`}
             >
               <X className="w-3.5 h-3.5" />
@@ -249,10 +312,51 @@ export const AddressAutoSuggestInput: React.FC<AddressAutoSuggestInputProps> = (
             </button>
           )}
 
-          <div className="max-h-60 overflow-y-auto divide-y divide-inherit">
+          {/* Quick Direct Geocode Action for Typed Address */}
+          {value.trim().length >= 2 && (
+            <button
+              type="button"
+              onClick={() => handleDirectGeocode(value)}
+              className="w-full text-left px-3.5 py-2 border-b border-inherit bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 flex items-center justify-between transition cursor-pointer"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <Globe className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                <span className="text-xs font-bold truncate">
+                  Use exact address: &ldquo;{value.trim()}&rdquo;
+                </span>
+              </div>
+              <span className="text-[10px] font-semibold flex items-center gap-1 text-emerald-400/90 flex-shrink-0">
+                Geocode & Route <ArrowRight className="w-3 h-3" />
+              </span>
+            </button>
+          )}
+
+          {/* Live Searching Indicator */}
+          {isSearchingLive && (
+            <div className="px-3.5 py-2 text-[11px] text-sky-400 flex items-center gap-2 border-b border-inherit bg-sky-500/5">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              <span>Searching live OpenStreetMap worldwide for &ldquo;{value}&rdquo;...</span>
+            </div>
+          )}
+
+          {/* Suggestions List */}
+          <div className="max-h-64 overflow-y-auto divide-y divide-inherit">
             {allSuggestions.length === 0 ? (
               <div className="p-4 text-center text-xs opacity-60">
-                {isSearchingLive ? 'Searching worldwide cycling map...' : 'No matching cycling locations found. Press enter for custom address.'}
+                {isSearchingLive 
+                  ? 'Searching worldwide cycling map...' 
+                  : (
+                    <div className="space-y-1">
+                      <div>No immediate matches found for &ldquo;{value}&rdquo;.</div>
+                      <button
+                        type="button"
+                        onClick={() => handleDirectGeocode(value)}
+                        className="text-emerald-400 font-bold hover:underline cursor-pointer"
+                      >
+                        Click here to search global OpenStreetMap for this exact address
+                      </button>
+                    </div>
+                  )}
               </div>
             ) : (
               allSuggestions.map((place, idx) => {
@@ -276,19 +380,27 @@ export const AddressAutoSuggestInput: React.FC<AddressAutoSuggestInputProps> = (
                   >
                     <div className="flex items-start gap-2.5 min-w-0">
                       <div className="mt-0.5 w-6 h-6 rounded-lg bg-zinc-800 flex items-center justify-center flex-shrink-0">
-                        {renderCategoryIcon(place.category)}
+                        {isLiveOSM ? (
+                          <Globe className="w-3.5 h-3.5 text-sky-400" />
+                        ) : (
+                          renderCategoryIcon(place.category)
+                        )}
                       </div>
                       <div className="min-w-0">
                         <div className="text-xs font-bold truncate flex items-center gap-1.5">
                           <span>{place.name}</span>
+                          {isLiveOSM ? (
+                            <span className="text-[9px] font-black uppercase px-1.5 py-0.2 rounded bg-sky-500/15 text-sky-400 border border-sky-500/30">
+                              OSM Live
+                            </span>
+                          ) : (
+                            <span className="text-[9px] font-semibold uppercase px-1.5 py-0.2 rounded bg-zinc-700/60 text-zinc-300">
+                              Preset Hub
+                            </span>
+                          )}
                           {place.ele > 150 && (
                             <span className="text-[10px] font-mono text-amber-400 font-semibold">
                               {place.ele}m peak
-                            </span>
-                          )}
-                          {isLiveOSM && (
-                            <span className="text-[9px] font-black uppercase px-1.5 py-0.2 rounded bg-sky-500/15 text-sky-400 border border-sky-500/30">
-                              OSM Live
                             </span>
                           )}
                         </div>

@@ -134,4 +134,18 @@ test('searchCyclingPlaces returns accurate auto-suggest results for cycling addr
   assert.equal(emptyQueryResults.length, 5);
 });
 
+test('fetchRealElevations returns authentic DEM elevations for GPS coordinates', async () => {
+  const { fetchRealElevations } = await import('../services/elevationService');
+  // Coordinates for San Francisco Presidio and Hawk Hill summit
+  const coords = [
+    { lat: 37.8015, lng: -122.4650 },
+    { lat: 37.8260, lng: -122.4995 }
+  ];
+  const elevations = await fetchRealElevations(coords);
+  assert.equal(elevations.length, 2);
+  // Presidio is near coast (~20-40m), Hawk Hill is a prominent summit (>150m)
+  assert.ok(elevations[0] >= 0, 'Coastal elevation should be non-negative');
+  assert.ok(elevations[1] > elevations[0], 'Hawk Hill summit elevation must be higher than base coastal elevation');
+});
+
 
