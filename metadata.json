@@ -1,0 +1,6 @@
+{
+  "name": "VeloNav - Cycling GPS & Route Planner",
+  "description": "High-contrast cycling GPS navigation prioritizing bike lanes and elevation-aware routing, offline maps, climb & hazard alerts, multi-day tours, and GPX sync.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
